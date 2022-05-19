@@ -1,56 +1,62 @@
 from dotenv import load_dotenv
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from telegram import ReplyKeyboardMarkup
+from questions import upload_questions_and_answers, get_question
+from functools import partial
 import logging
+import json
+import redis
 import os
 
 
-def text_formatting(text):
-    index = text.index(':')
-    return text[index+1:].strip('\n')
+QUESTIONS_AND_ANSWERS = upload_questions_and_answers()
 
 
-def get_questions(path_to_questions_directory):
-    questions = {}
-    files = os.listdir(path_to_questions_directory)
-    with open(os.path.join(path_to_questions_directory, files[2]), 'r', encoding='koi8-r') as f:
-        text = f.read()
-
-    text_lines = text.split('\n\n')
-
-    for index, value in enumerate(text_lines):
-        if 'Ответ:' in value:
-            question = text_formatting(text_lines[index-1])
-            answer = text_formatting(value)
-            questions.update({question: answer})
-
-    return questions
-
-
-def start(bot, update):
+def start(bot, update, db):
     """Send a message when the command /start is issued."""
     reply_keyboard = [['Новый вопрос', 'Сдаться'], ['Мой счет']]
     markup = ReplyKeyboardMarkup(reply_keyboard)
-    update.message.reply_text('Привет! Я бот для викторины.', reply_markup=markup)
+    update.message.reply_text(
+        'Привет! Я бот для викторины.',
+        reply_markup=markup,
+    )
+    questions_and_answers = upload_questions_and_answers()
+    db.set('questions_and_answers', json.dumps(questions_and_answers))
 
 
-def echo(bot, update):
+def echo(bot, update, db):
     """Echo the user message."""
-    update.message.reply_text(update.message.text)
+    user_id = update.message.chat_id
+    user_choice = update.message.text
+    questions_and_answers = json.loads(db.get('questions_and_answers'))
+    if user_choice == 'Новый вопрос':
+        question = get_question(questions_and_answers)
+        update.message.reply_text(question)
+        db.set(user_id, question)
 
 
 def main():
     """Start the bot."""
     load_dotenv()
     telegram_token = os.getenv('TELEGRAM_TOKEN')
+    redis_host = os.getenv('REDIS_HOST')
+    redis_port = os.getenv('REDIS_PORT')
+    redis_passw = os.getenv('REDIS_PASSW')
 
-    path_to_questions_directory = os.path.join(os.getcwd(), 'questions_for_quiz')
+    redis_db = redis.Redis(
+        host=redis_host,
+        port=redis_port,
+        password=redis_passw,
+        db=0,
+    )
 
     updater = Updater(telegram_token)
 
     dp = updater.dispatcher
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.text, echo))
+    start_quiz = partial(start, db=redis_db)
+    new_question = partial(echo, db=redis_db)
+    dp.add_handler(CommandHandler("start", start_quiz))
+    dp.add_handler(MessageHandler(Filters.text, new_question))
 
     updater.start_polling()
     updater.idle()
