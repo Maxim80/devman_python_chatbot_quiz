@@ -1,5 +1,12 @@
 from dotenv import load_dotenv
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, RegexHandler
+from telegram.ext import (
+    Updater,
+    CommandHandler,
+    MessageHandler,
+    Filters,
+    ConversationHandler,
+    RegexHandler
+)
 from telegram import ReplyKeyboardMarkup
 from questions import upload_questions, get_question, user_answer_check
 from functools import partial
@@ -18,38 +25,44 @@ logger = logging.getLogger(__name__)
 
 class DialogStatus(enum.Enum):
     USER_CHOICE = 0
-    NEW_QUESTION = 1
-    USER_ANSWER = 2
 
 
 def start(bot, update, db):
-    """Send a message when the command /start is issued."""
     reply_keyboard = [['Новый вопрос', 'Сдаться'], ['Мой счет']]
     markup = ReplyKeyboardMarkup(reply_keyboard)
+
+    all_questions = upload_questions()
+    db.set('all_questions', json.dumps(all_questions))
+
+    user_id = update.message.chat_id
+    user_data = {'question': None, 'counter': 0}
+    db.set(user_id, json.dumps(user_data))
+
     update.message.reply_text(
         'Привет! Я бот для викторины.',
         reply_markup=markup,
     )
-    questions = upload_questions()
-    db.set('questions', json.dumps(questions))
     return DialogStatus.USER_CHOICE
 
 
 def handle_new_question_request(bot, update, db):
     user_id = update.message.chat_id
-    questions = json.loads(db.get('questions'))
-    question_for_user = get_question(questions)
-    update.message.reply_text(question_for_user)
-    db.set(user_id, question_for_user)
-    return DialogStatus.USER_ANSWER
+    all_questions = json.loads(db.get('all_questions'))
+    user_data = json.loads(db.get(user_id))
+    user_question = get_question(all_questions)
+    update.message.reply_text(user_question)
+    user_data['question'] = user_question
+    db.set(user_id, json.dumps(user_data))
+    return DialogStatus.USER_CHOICE
 
 
 def handle_solution_attempt(bot, update, db):
     user_id = update.message.chat_id
     user_answer = update.message.text
-    questions = json.loads(db.get('questions'))
-    question_for_user = db.get(user_id).decode('utf-8')
-    correct_answer = questions[question_for_user]
+    all_questions = json.loads(db.get('all_questions'))
+    user_data = json.loads(db.get(user_id))
+    user_question = user_data['question']
+    correct_answer = all_questions[user_question]
     is_user_answer_correctly = user_answer_check(
         user_answer,
         correct_answer,
@@ -58,21 +71,32 @@ def handle_solution_attempt(bot, update, db):
         update.message.reply_text(
             'Правильно! Поздравляю! Для следующего вопроса нажми «Новый вопрос'
         )
-        questions.pop(question_for_user)
-        db.set('questions', json.dumps(questions))
+        all_questions.pop(user_question)
+        user_data['counter'] += 1
+        db.set('all_questions', json.dumps(all_questions))
+        db.set(user_id, json.dumps(user_data))
         return DialogStatus.USER_CHOICE
     else:
         update.message.reply_text('Неправильно… Попробуешь ещё раз?')
-        return DialogStatus.USER_ANSWER
+        return DialogStatus.USER_CHOICE
 
 
-def handle_throw_in_towel(bot, update, db):
+def handle_surrender_request(bot, update, db):
     user_id = update.message.chat_id
-    questions = json.loads(db.get('questions'))
-    user_question = db.get(user_id).decode()
-    answer = questions[user_question]
+    all_questions = json.loads(db.get('all_questions'))
+    user_data = json.loads(db.get(user_id))
+    user_question = user_data['question']
+    answer = all_questions[user_question]
     update.message.reply_text(answer)
     handle_new_question_request(bot, update, db)
+
+
+def handle_counter_request(bot, update, db):
+    user_id = update.message.chat_id
+    user_data = json.loads(db.get(user_id))
+    counter = user_data['counter']
+    update.message.reply_text(counter)
+    return DialogStatus.USER_CHOICE
 
 
 def error(bot, update, error):
@@ -101,7 +125,8 @@ def main():
     start_quiz = partial(start, db=redis_db)
     new_question = partial(handle_new_question_request, db=redis_db)
     solution_attempt = partial(handle_solution_attempt, db=redis_db)
-    throw_in_towel = partial(handle_throw_in_towel, db=redis_db)
+    surrender = partial(handle_surrender_request, db=redis_db)
+    counter = partial(handle_counter_request, db=redis_db)
 
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('start', start_quiz)],
@@ -109,10 +134,8 @@ def main():
         states={
             DialogStatus.USER_CHOICE: [
                 RegexHandler('^Новый вопрос$', new_question),
-                RegexHandler('^Мой счет$', new_question),
-            ],
-            DialogStatus.USER_ANSWER: [
-                RegexHandler('^Сдаться$', throw_in_towel),
+                RegexHandler('^Мой счет$', counter),
+                RegexHandler('^Сдаться$', surrender),
                 MessageHandler(Filters.text, solution_attempt),
             ],
         },

@@ -3,11 +3,15 @@ import random
 
 
 def text_normalize(text: str) -> str:
+    """Выделяет из текста тело вопроса/ответа."""
     index = text.index(':')
     return text[index+1:].strip('\n')
 
 
 def answer_normalize(answer: str) -> str:
+    """
+    Нормализует ответ пользователя, все что все что он ввел до точки или скобок.
+    """
     index = answer.find('(')
     if index != -1:
         answer = answer[:index]
@@ -21,6 +25,7 @@ def answer_normalize(answer: str) -> str:
 
 
 def upload_questions() -> dict:
+    """Загружает вопросы и ответы к ним из текстового файла в словарь."""
     questions_directory = os.path.join(os.getcwd(), 'questions_for_quiz')
     questions = {}
     files = os.listdir(questions_directory)
@@ -43,6 +48,7 @@ def get_question(questions: dict) -> str:
 
 
 def user_answer_check(user_answer: str, correct_answer: str) -> bool:
+    "Проверят ответ пользователя, сравнивая его с правильным ответом."
     user_answer = answer_normalize(user_answer)
     correct_answer = answer_normalize(correct_answer)
     if user_answer in correct_answer:
