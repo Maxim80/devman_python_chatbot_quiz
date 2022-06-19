@@ -5,7 +5,7 @@
 * TG: @mxm_quiz_bot  
 
 Пример работы для Telegram:  
-![](./examination_tg.gif)
+![](./examination_tg.gif)  
 Примера работы для Вконтакте:  
 ![](./examination_vk.gif)  
 
