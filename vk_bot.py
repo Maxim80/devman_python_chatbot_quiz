@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from vk_api.longpoll import VkLongPoll, VkEventType
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
-from questions import upload_questions, get_question, user_answer_check
+from questions import Questions, NoMoreQuestions
 import vk_api as vk
 import random
 import os
@@ -10,80 +10,75 @@ import json
 
 
 def start(event, vk_api, keyboard, db):
-    all_questions = upload_questions()
-    db.set('all_questions', json.dumps(all_questions))
-
     user_id = event.user_id
     user_data = {'question': None, 'counter': 0}
     db.set(user_id, json.dumps(user_data))
+    message = 'Привет! Я бот для викторины.'
 
     vk_api.messages.send(
         user_id=event.user_id,
-        message='Привет! Я бот для викторины.',
+        message=message,
         random_id=random.randint(1, 1000),
         keyboard=keyboard.get_keyboard(),
     )
 
 
-def handle_new_question_request(event, vk_api, keyboard, db):
+def handle_new_question_request(event, vk_api, keyboard, questions, db):
     user_id = event.user_id
-    all_questions = json.loads(db.get('all_questions'))
     user_data = json.loads(db.get(user_id))
-    user_question = get_question(all_questions)
-    user_data['question'] = user_question
-    db.set(user_id, json.dumps(user_data))
+    try:
+        user_question = questions.get_question()
+    except NoMoreQuestions:
+        message = 'Конец викторины. Вы ответили на все вопросы.'
+    else:
+        message = user_question
+        user_data['question'] = user_question
+        db.set(user_id, json.dumps(user_data))
+
     vk_api.messages.send(
         user_id=user_id,
-        message=user_question,
+        message=message,
         random_id=random.randint(1, 1000),
         keyboard=keyboard.get_keyboard(),
     )
 
 
-def handle_solution_attempt(event, vk_api, keyboard, db):
+def handle_solution_attempt(event, vk_api, keyboard, questions, db):
     user_id = event.user_id
     user_answer = event.text
-    all_questions = json.loads(db.get('all_questions'))
     user_data = json.loads(db.get(user_id))
     user_question = user_data['question']
-    correct_answer = all_questions[user_question]
-    is_user_answer_correctly = user_answer_check(
+    is_user_answer_correct = questions.is_answer_correct(
+        user_question,
         user_answer,
-        correct_answer,
     )
-    if is_user_answer_correctly:
-        all_questions.pop(user_question)
+    if is_user_answer_correct:
+        message = 'Правильно! Поздравляю! Для следующего вопроса нажми "Новый вопрос"'
         user_data['counter'] += 1
-        db.set('all_questions', json.dumps(all_questions))
         db.set(user_id, json.dumps(user_data))
-        vk_api.messages.send(
-            user_id=user_id,
-            message='Правильно! Поздравляю! Для следующего вопроса нажми «Новый вопрос',
-            random_id=random.randint(1, 1000),
-            keyboard=keyboard.get_keyboard(),
-        )
     else:
-        vk_api.messages.send(
-            user_id=user_id,
-            message='Неправильно… Попробуешь ещё раз?',
-            random_id=random.randint(1, 1000),
-            keyboard=keyboard.get_keyboard(),
-        )
+        message='Неправильно… Попробуешь ещё раз?'
+
+    vk_api.messages.send(
+        user_id=user_id,
+        message=message,
+        random_id=random.randint(1, 1000),
+        keyboard=keyboard.get_keyboard(),
+    )
 
 
-def handle_surrender_request(event, vk_api, keyboard, db):
+def handle_surrender_request(event, vk_api, keyboard, questions, db):
     user_id = event.user_id
-    all_questions = json.loads(db.get('all_questions'))
     user_data = json.loads(db.get(user_id))
     user_question = user_data['question']
-    answer = all_questions[user_question]
+    answer = questions.get_correct_answer(user_question)
     vk_api.messages.send(
         user_id=user_id,
         message=answer,
         random_id=random.randint(1, 1000),
         keyboard=keyboard.get_keyboard(),
     )
-    handle_new_question_request(event, vk_api, keyboard, db)
+    handle_new_question_request(event, vk_api, keyboard, questions, db)
 
 
 def handle_counter_request(event, vk_api, keyboard, db):
@@ -118,6 +113,8 @@ def main():
         db=0,
     )
 
+    questions = Questions()
+
     vk_session = vk.VkApi(token=vk_token)
     vk_api = vk_session.get_api()
     longpoll = VkLongPoll(vk_session)
@@ -125,16 +122,19 @@ def main():
     try:
         for event in longpoll.listen():
             if event.type == VkEventType.MESSAGE_NEW and event.to_me:
-                if event.text == 'старт':
+                if event.text == 'start':
                     start(event, vk_api, keyboard, redis_db)
                 elif event.text == 'Новый вопрос':
-                    handle_new_question_request(event, vk_api, keyboard, redis_db)
+                    handle_new_question_request(
+                        event, vk_api, keyboard, questions, redis_db)
+                elif event.text == 'Сдаться':
+                    handle_surrender_request(
+                        event, vk_api, keyboard, questions, redis_db)
                 elif event.text == 'Мой счет':
                     handle_counter_request(event, vk_api, keyboard, redis_db)
-                elif event.text == 'Сдаться':
-                    handle_surrender_request(event, vk_api, keyboard, redis_db)
                 else:
-                    handle_solution_attempt(event, vk_api, keyboard, redis_db)
+                    handle_solution_attempt(
+                        event, vk_api, keyboard, questions, redis_db)
     except KeyboardInterrupt:
         pass
 
