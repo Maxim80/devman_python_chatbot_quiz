@@ -1,0 +1,2 @@
+class NoMoreQuestions(Exception):
+    pass

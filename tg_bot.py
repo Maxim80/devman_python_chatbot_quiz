@@ -1,4 +1,3 @@
-from dotenv import load_dotenv
 from telegram.ext import (
     Updater,
     CommandHandler,
@@ -8,11 +7,16 @@ from telegram.ext import (
     RegexHandler
 )
 from telegram import ReplyKeyboardMarkup
-from telegram.bot import Bot
-from telegram.update import Update
-from questions import Questions, NoMoreQuestions
+from questions import get_questions
+from exceptions import NoMoreQuestions
 from functools import partial
-from redis import Redis
+from config import (
+    TELEGRAM_TOKEN,
+    REDIS_HOST,
+    REDIS_PORT,
+    REDIS_PASSW,
+)
+import redis
 import logging
 import json
 import os
@@ -20,9 +24,8 @@ import enum
 import logging
 
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    level=logging.INFO)
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 
 class DialogStatus(enum.Enum):
@@ -67,7 +70,7 @@ def handle_solution_attempt(bot, update, questions, db):
     user_data = json.loads(db.get(user_id))
     user_question = user_data['question']
 
-    is_user_answer_correctly = questions.is_answer_correct(user_question,
+    is_user_answer_correctly = questions.check_answer(user_question,
         user_answer)
 
     if is_user_answer_correctly:
@@ -84,9 +87,8 @@ def handle_surrender_request(bot, update, questions, db):
     user_id = update.message.chat_id
     user_data = json.loads(db.get(user_id))
     user_question = user_data['question']
-    answer = questions.get_correct_answer(user_question)
+    answer = questions.delete_question(user_question)
     update.message.reply_text(answer)
-    questions.delete_question(user_question)
     handle_new_question_request(bot, update, questions, db)
 
 
@@ -103,23 +105,17 @@ def error(bot, update, error):
 
 
 def main():
-    load_dotenv()
-    telegram_token = os.getenv('TELEGRAM_TOKEN')
-    redis_host = os.getenv('REDIS_HOST')
-    redis_port = os.getenv('REDIS_PORT')
-    redis_passw = os.getenv('REDIS_PASSW')
+    updater = Updater(TELEGRAM_TOKEN)
+    dp = updater.dispatcher
 
-    redis_db = Redis(
-        host=redis_host,
-        port=redis_port,
-        password=redis_passw,
+    questions = get_questions()
+
+    redis_db = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSW,
         db=0,
     )
-
-    questions = Questions()
-
-    updater = Updater(telegram_token)
-    dp = updater.dispatcher
 
     start_quiz = partial(start, db=redis_db)
     new_question = partial(handle_new_question_request, questions = questions, db=redis_db)

@@ -1,30 +1,20 @@
+from config import PATH_TO_QUESTIONS_FILES
+from typing import List
+from exceptions import NoMoreQuestions
 import os
 import random
 
 
-class NoMoreQuestions(Exception):
-    """Исключение, которое выбрасывается, когда словать с вопросами пуст."""
-    pass
+QuestionsAndAnswers = dict
+Question = str
+Answer = str
 
 
-class Questions():
-    """
-    Класс для работы с базов вопросов для викторины, которая представляет из
-    себя словарь, где ключь вопрос, значение ответ на него.
-    """
-    def __init__(self, path_to_questions='questions.txt'):
-        """Инициализация словаря с вопросами и ответами к ним."""
-        self.questions_and_answers = self._upload_questions(path_to_questions)
-
-    def _question_and_answer_normalize(self, text: str) -> str:
-        """Выделяет из текста тело вопроса/ответа."""
-        index = text.index(':')
-        return text[index+1:].strip('\n')
-
-    def _answer_normalize(self, answer: str) -> str:
-        """
-        Нормализует ответ пользователя, до точки или скобок, убирает лишние символы.
-        """
+class QuestionsForQuiz:
+    def __init__(self, questions_and_answers: QuestionsAndAnswers) -> None:
+        self.questions_and_answers = questions_and_answers
+    
+    def _answer_normalize(self, answer: Answer) -> Answer:
         answer = answer.strip(' .').lower()
         index = 0
         for symbol in answer:
@@ -32,43 +22,55 @@ class Questions():
                 break
             index +=1
         return answer[:index]
-
-    def _upload_questions(self, path_to_questions: str) -> dict:
-        """Загружает вопросы и ответы к ним из текстового файла."""
-        questions = {}
-        with open(path_to_questions, 'r', encoding='koi8-r') as f:
-            text = f.read()
-        text_lines = text.split('\n\n')
-        for index, value in enumerate(text_lines):
-            if 'Ответ:' in value:
-                question = self._question_and_answer_normalize(text_lines[index-1])
-                answer = self._question_and_answer_normalize(value)
-                questions.update({question: answer})
-        return questions
-
-    def get_question(self) -> str:
-        """Возвращает вопрос, выбранный в случайном порядке."""
-        questions = list(self.questions_and_answers.keys())
+    
+    def get_question(self) -> Question:
+        questions: List[Question] = list(self.questions_and_answers.keys())
         if not questions:
             raise NoMoreQuestions
         else:
             return random.choice(questions)
 
-    def delete_question(self, question):
-        """Удаляет вопрос."""
-        self.questions_and_answers.pop(question)
-
-    def get_correct_answer(self, question: str):
-        """Возвращает ответ на вопрос."""
+    def get_answer(self, question: Question) -> Answer:
         return self.questions_and_answers[question]
-
-    def is_answer_correct(self, question: str, answer: str) -> bool:
-        "Проверяет правильность ответа на вопрос."
+    
+    def delete_question(self, question: Question) -> Answer:
+        return self.questions_and_answers.pop(question)
+    
+    def check_answer(self, question: Question, user_answer: Answer) -> bool:
         correct_answer = self.questions_and_answers[question]
         correct_answer = self._answer_normalize(correct_answer)
-        answer = self._answer_normalize(answer)
-        if answer in correct_answer:
-            self.delete_question(question)
+        user_answer = self._answer_normalize(user_answer)
+        if user_answer in correct_answer:
             return True
         else:
             return False
+
+
+def _reading_text_from_files(file_paths: str) -> str:
+    result_text = ''
+    for path in file_paths:
+        with open(path, 'r', encoding='koi8-r') as file:
+            text = file.read()
+        result_text += text
+    return result_text
+
+
+def _load_questions_from_files(path_to_questions_files: str) -> QuestionsAndAnswers:
+    questions = {}
+    file_paths = [
+        os.path.join(PATH_TO_QUESTIONS_FILES, file_name)
+        for file_name in os.listdir(path_to_questions_files)
+    ]
+    row_text = _reading_text_from_files(file_paths)
+    text_lines = row_text.split('\n\n')
+    for index, value in enumerate(text_lines):
+        if 'Вопрос' in value:
+            question = value.split(':')[1].strip('\n')
+            answer = text_lines[index+1].split(':')[1].strip('\n')
+            questions.update({question: answer})
+    return questions
+ 
+
+def get_questions(path_to_questions_files: str=PATH_TO_QUESTIONS_FILES)-> QuestionsForQuiz:
+    questions = _load_questions_from_files(path_to_questions_files)
+    return QuestionsForQuiz(questions)

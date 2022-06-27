@@ -1,7 +1,13 @@
-from dotenv import load_dotenv
 from vk_api.longpoll import VkLongPoll, VkEventType
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
-from questions import Questions, NoMoreQuestions
+from questions import get_questions
+from exceptions import NoMoreQuestions
+from config import (
+    VK_TOKEN,
+    REDIS_HOST,
+    REDIS_PORT,
+    REDIS_PASSW,
+)
 import vk_api as vk
 import random
 import os
@@ -48,7 +54,7 @@ def handle_solution_attempt(event, vk_api, keyboard, questions, db):
     user_answer = event.text
     user_data = json.loads(db.get(user_id))
     user_question = user_data['question']
-    is_user_answer_correct = questions.is_answer_correct(
+    is_user_answer_correct = questions.check_answer(
         user_question,
         user_answer,
     )
@@ -71,7 +77,7 @@ def handle_surrender_request(event, vk_api, keyboard, questions, db):
     user_id = event.user_id
     user_data = json.loads(db.get(user_id))
     user_question = user_data['question']
-    answer = questions.get_correct_answer(user_question)
+    answer = questions.get_answer(user_question)
     vk_api.messages.send(
         user_id=user_id,
         message=answer,
@@ -94,11 +100,9 @@ def handle_counter_request(event, vk_api, keyboard, db):
 
 
 def main():
-    load_dotenv()
-    vk_token = os.getenv('VK_TOKEN')
-    redis_host = os.getenv('REDIS_HOST')
-    redis_port = os.getenv('REDIS_PORT')
-    redis_passw = os.getenv('REDIS_PASSW')
+    vk_session = vk.VkApi(token=VK_TOKEN)
+    vk_api = vk_session.get_api()
+    longpoll = VkLongPoll(vk_session)
 
     keyboard = VkKeyboard(one_time=True)
     keyboard.add_button('Новый вопрос', color=VkKeyboardColor.SECONDARY)
@@ -107,18 +111,13 @@ def main():
     keyboard.add_button('Мой счет', color=VkKeyboardColor.SECONDARY)
 
     redis_db = redis.Redis(
-        host=redis_host,
-        port=redis_port,
-        password=redis_passw,
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=REDIS_PASSW,
         db=0,
     )
 
-    questions = Questions()
-
-    vk_session = vk.VkApi(token=vk_token)
-    vk_api = vk_session.get_api()
-    longpoll = VkLongPoll(vk_session)
-
+    questions = get_questions()
     try:
         for event in longpoll.listen():
             if event.type == VkEventType.MESSAGE_NEW and event.to_me:
